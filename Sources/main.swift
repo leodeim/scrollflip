@@ -42,6 +42,13 @@ final class Controller: NSObject, NSApplicationDelegate {
     private var reversed: Set<Device> = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // A second instance would flip events back, cancelling the first.
+        let running = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "")
+        if running.contains(where: { $0 != .current }) {
+            print("scrollflip: already running, exiting")
+            exit(0)
+        }
+
         UserDefaults.standard.register(defaults: [Device.mouse.defaultsKey: true])
         reversed = Set(Device.allCases.filter { UserDefaults.standard.bool(forKey: $0.defaultsKey) })
 
