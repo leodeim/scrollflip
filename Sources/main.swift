@@ -7,25 +7,38 @@ enum Device: String, CaseIterable {
     init(_ event: CGEvent) {
         self = event.getIntegerValueField(.scrollWheelEventIsContinuous) != 0 ? .trackpad : .mouse
     }
-
-    var defaultsKey: String { "reverse.\(rawValue)" }
 }
 
-func flip(_ event: CGEvent) {
-    // Read everything before writing: setting one delta field can make macOS recompute the others.
-    let d1 = event.getIntegerValueField(.scrollWheelEventDeltaAxis1)
-    let d2 = event.getIntegerValueField(.scrollWheelEventDeltaAxis2)
-    let f1 = event.getDoubleValueField(.scrollWheelEventFixedPtDeltaAxis1)
-    let f2 = event.getDoubleValueField(.scrollWheelEventFixedPtDeltaAxis2)
-    let p1 = event.getIntegerValueField(.scrollWheelEventPointDeltaAxis1)
-    let p2 = event.getIntegerValueField(.scrollWheelEventPointDeltaAxis2)
+enum Axis: String, CaseIterable {
+    case vertical, horizontal
 
-    event.setIntegerValueField(.scrollWheelEventDeltaAxis1, value: -d1)
-    event.setIntegerValueField(.scrollWheelEventDeltaAxis2, value: -d2)
-    event.setDoubleValueField(.scrollWheelEventFixedPtDeltaAxis1, value: -f1)
-    event.setDoubleValueField(.scrollWheelEventFixedPtDeltaAxis2, value: -f2)
-    event.setIntegerValueField(.scrollWheelEventPointDeltaAxis1, value: -p1)
-    event.setIntegerValueField(.scrollWheelEventPointDeltaAxis2, value: -p2)
+    var fields: (delta: CGEventField, fixedPt: CGEventField, point: CGEventField) {
+        switch self {
+        case .vertical: (.scrollWheelEventDeltaAxis1, .scrollWheelEventFixedPtDeltaAxis1, .scrollWheelEventPointDeltaAxis1)
+        case .horizontal: (.scrollWheelEventDeltaAxis2, .scrollWheelEventFixedPtDeltaAxis2, .scrollWheelEventPointDeltaAxis2)
+        }
+    }
+}
+
+struct Toggle: Hashable {
+    static let all = Device.allCases.flatMap { device in Axis.allCases.map { Toggle(device: device, axis: $0) } }
+
+    let device: Device
+    let axis: Axis
+
+    var defaultsKey: String { "reverse.\(device.rawValue).\(axis.rawValue)" }
+}
+
+func flip(_ event: CGEvent, _ axes: [Axis]) {
+    // Read everything before writing: setting one delta field can make macOS recompute the others.
+    let values = Axis.allCases.map { axis in
+        let f = axis.fields
+        return (f, axes.contains(axis) ? -1 : 1 as Int64,
+                event.getIntegerValueField(f.delta), event.getDoubleValueField(f.fixedPt), event.getIntegerValueField(f.point))
+    }
+    for (f, sign, delta, _, _) in values { event.setIntegerValueField(f.delta, value: sign * delta) }
+    for (f, sign, _, fixedPt, _) in values { event.setDoubleValueField(f.fixedPt, value: Double(sign) * fixedPt) }
+    for (f, sign, _, _, point) in values { event.setIntegerValueField(f.point, value: sign * point) }
 }
 
 private let callback: CGEventTapCallBack = { _, type, event, info in
@@ -37,9 +50,9 @@ private let callback: CGEventTapCallBack = { _, type, event, info in
 final class Controller: NSObject, NSApplicationDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private let accessItem = NSMenuItem(title: "Needs Accessibility access…", action: #selector(openAccessibilitySettings), keyEquivalent: "")
-    private var deviceItems: [Device: NSMenuItem] = [:]
+    private var toggleItems: [Toggle: NSMenuItem] = [:]
     private var tap: CFMachPort?
-    private var reversed: Set<Device> = []
+    private var reversed: Set<Toggle> = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // A second instance would flip events back, cancelling the first.
@@ -49,19 +62,24 @@ final class Controller: NSObject, NSApplicationDelegate {
             exit(0)
         }
 
-        UserDefaults.standard.register(defaults: [Device.mouse.defaultsKey: true])
-        reversed = Set(Device.allCases.filter { UserDefaults.standard.bool(forKey: $0.defaultsKey) })
+        UserDefaults.standard.register(defaults: Dictionary(uniqueKeysWithValues:
+            Axis.allCases.map { (Toggle(device: .mouse, axis: $0).defaultsKey, true) }))
+        reversed = Set(Toggle.all.filter { UserDefaults.standard.bool(forKey: $0.defaultsKey) })
 
         accessItem.target = self
         let menu = NSMenu()
         menu.autoenablesItems = false
         menu.addItem(accessItem)
         for device in Device.allCases {
-            let item = NSMenuItem(title: "Reverse \(device.rawValue)", action: #selector(toggle), keyEquivalent: "")
-            item.target = self
-            item.representedObject = device
-            deviceItems[device] = item
-            menu.addItem(item)
+            menu.addItem(.sectionHeader(title: device.rawValue.capitalized))
+            for axis in Axis.allCases {
+                let toggle = Toggle(device: device, axis: axis)
+                let item = NSMenuItem(title: "Reverse \(axis.rawValue)", action: #selector(toggle(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = toggle
+                toggleItems[toggle] = item
+                menu.addItem(item)
+            }
         }
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit ScrollFlip", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
@@ -84,8 +102,10 @@ final class Controller: NSObject, NSApplicationDelegate {
         switch type {
         case .tapDisabledByTimeout, .tapDisabledByUserInput:
             if !reversed.isEmpty, let tap { CGEvent.tapEnable(tap: tap, enable: true) }
-        case .scrollWheel where reversed.contains(Device(event)):
-            flip(event)
+        case .scrollWheel:
+            let device = Device(event)
+            let axes = Axis.allCases.filter { reversed.contains(Toggle(device: device, axis: $0)) }
+            if !axes.isEmpty { flip(event, axes) }
         default:
             break
         }
@@ -111,9 +131,9 @@ final class Controller: NSObject, NSApplicationDelegate {
     }
 
     @objc private func toggle(_ sender: NSMenuItem) {
-        guard let device = sender.representedObject as? Device else { return }
-        if reversed.remove(device) == nil { reversed.insert(device) }
-        UserDefaults.standard.set(reversed.contains(device), forKey: device.defaultsKey)
+        guard let toggle = sender.representedObject as? Toggle else { return }
+        if reversed.remove(toggle) == nil { reversed.insert(toggle) }
+        UserDefaults.standard.set(reversed.contains(toggle), forKey: toggle.defaultsKey)
         if let tap { CGEvent.tapEnable(tap: tap, enable: !reversed.isEmpty) }
         refresh()
     }
@@ -124,8 +144,8 @@ final class Controller: NSObject, NSApplicationDelegate {
 
     private func refresh() {
         accessItem.isHidden = tap != nil
-        for (device, item) in deviceItems {
-            item.state = reversed.contains(device) ? .on : .off
+        for (toggle, item) in toggleItems {
+            item.state = reversed.contains(toggle) ? .on : .off
         }
 
         let active = tap != nil && !reversed.isEmpty

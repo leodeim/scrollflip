@@ -12,7 +12,7 @@ Then allow ScrollFlip in System Settings › Privacy & Security › Accessibilit
 
 ## Use
 
-Click the menu-bar icon and tick **Reverse mouse** and/or **Reverse trackpad**. A filled icon means it's active.
+Click the menu-bar icon and tick **Reverse vertical** and/or **Reverse horizontal** under **Mouse** and **Trackpad**. A filled icon means it's active.
 
 ## Other commands
 
@@ -26,5 +26,5 @@ make uninstall   # remove it
 
 - ~17 MB memory, mostly the AppKit baseline any menu-bar app pays
 - ~0% CPU: it listens to scroll events only, with no timers or polling
-- With both toggles off it receives no events at all
-- ~110 KB binary, ~155 lines of Swift, no dependencies
+- With all toggles off it receives no events at all
+- ~110 KB binary, ~160 lines of Swift, no dependencies
