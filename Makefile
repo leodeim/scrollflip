@@ -5,7 +5,7 @@ MINOS   := $(shell plutil -extract LSMinimumSystemVersion raw Info.plist)
 VERSION ?= $(shell plutil -extract CFBundleShortVersionString raw Info.plist)
 ARCHS   := arm64 x86_64
 
-.PHONY: build run install uninstall restart logs clean FORCE
+.PHONY: build dmg run install uninstall restart logs clean FORCE
 
 build: build/$(APP)
 
@@ -23,6 +23,14 @@ build/$(APP): Sources/main.swift Info.plist build/version
 	cp Info.plist $@/Contents/Info.plist
 	plutil -replace CFBundleShortVersionString -string $(VERSION) $@/Contents/Info.plist
 	codesign --force --sign - --identifier $(LABEL) $@
+
+dmg: build
+	rm -rf build/dmg build/ScrollFlip-*.dmg
+	mkdir build/dmg
+	cp -R build/$(APP) build/dmg/
+	ln -s /Applications build/dmg/Applications
+	hdiutil create -volname ScrollFlip -srcfolder build/dmg -format UDZO build/ScrollFlip-$(VERSION).dmg
+	rm -rf build/dmg
 
 run: build
 	build/$(APP)/Contents/MacOS/scrollflip

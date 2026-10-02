@@ -19,12 +19,11 @@ jobs:
         run: |
           VERSION="$(plutil -extract CFBundleShortVersionString raw Info.plist).${{ github.run_number }}"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-          make build VERSION="$VERSION"
-          ditto -c -k --keepParent build/ScrollFlip.app "ScrollFlip-$VERSION.zip"
+          make dmg VERSION="$VERSION"
 
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "v$VERSION" "ScrollFlip-$VERSION.zip" \
+          gh release create "v$VERSION" "build/ScrollFlip-$VERSION.dmg" \
             --target "$GITHUB_SHA" --title "v$VERSION" --generate-notes

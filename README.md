@@ -4,7 +4,7 @@ Lightweight macOS app that reverses scroll direction for the mouse, the trackpad
 
 ## Install
 
-Download the latest zip from [Releases](https://github.com/leodeim/scrollflip/releases).
+Download the latest `.dmg` from [Releases](https://github.com/leodeim/scrollflip/releases) and drag ScrollFlip onto Applications.
 
 Allow ScrollFlip in System Settings › Privacy & Security › Accessibility.
 
