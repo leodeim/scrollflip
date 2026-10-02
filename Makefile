@@ -1,40 +1,48 @@
 APP     := ScrollFlip.app
 LABEL   := com.leodeim.scrollflip
 DEST    := $(HOME)/Applications/$(APP)
-AGENT   := $(HOME)/Library/LaunchAgents/$(LABEL).plist
-BIN     := $(DEST)/Contents/MacOS/scrollflip
 MINOS   := $(shell plutil -extract LSMinimumSystemVersion raw Info.plist)
+VERSION ?= $(shell plutil -extract CFBundleShortVersionString raw Info.plist)
+ARCHS   := arm64 x86_64
 
-.PHONY: build run install uninstall restart logs clean
+.PHONY: build run install uninstall restart logs clean FORCE
 
 build: build/$(APP)
 
-build/$(APP): Sources/main.swift Info.plist
+# Rewritten only when VERSION changes, so a new version forces a rebuild.
+build/version: FORCE
+	@mkdir -p build && echo $(VERSION) | cmp -s - $@ || echo $(VERSION) > $@
+
+build/$(APP): Sources/main.swift Info.plist build/version
 	rm -rf $@
 	mkdir -p $@/Contents/MacOS
-	swiftc -O -target $(shell uname -m)-apple-macos$(MINOS) $(SWIFTFLAGS) -o $@/Contents/MacOS/scrollflip Sources/main.swift || { rm -rf $@; exit 1; }
+	for arch in $(ARCHS); do \
+		swiftc -O -target $$arch-apple-macos$(MINOS) $(SWIFTFLAGS) -o build/scrollflip-$$arch Sources/main.swift || { rm -rf $@; exit 1; }; \
+	done
+	lipo -create -output $@/Contents/MacOS/scrollflip $(ARCHS:%=build/scrollflip-%)
 	cp Info.plist $@/Contents/Info.plist
+	plutil -replace CFBundleShortVersionString -string $(VERSION) $@/Contents/Info.plist
 	codesign --force --sign - --identifier $(LABEL) $@
 
 run: build
 	build/$(APP)/Contents/MacOS/scrollflip
 
 install: build
-	-launchctl bootout gui/$$(id -u)/$(LABEL) 2>/dev/null
-	mkdir -p $(HOME)/Applications $(HOME)/Library/LaunchAgents
+	-pkill -x scrollflip
+	mkdir -p $(HOME)/Applications
 	rm -rf $(DEST) && cp -R build/$(APP) $(DEST)
-	sed -e 's|__BIN__|$(BIN)|' launchagent.plist > $(AGENT)
-	launchctl bootstrap gui/$$(id -u) $(AGENT)
+	open $(DEST)
 
 uninstall:
-	-launchctl bootout gui/$$(id -u)/$(LABEL)
-	rm -rf $(AGENT) $(DEST)
+	-pkill -x scrollflip
+	rm -rf $(DEST)
 
 restart:
-	launchctl kickstart -k gui/$$(id -u)/$(LABEL)
+	-pkill -x scrollflip
+	open $(DEST)
 
 logs:
-	tail -f /tmp/scrollflip.log
+	log stream --predicate 'subsystem == "$(LABEL)"'
 
 clean:
 	rm -rf build

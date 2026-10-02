@@ -1,4 +1,8 @@
 import AppKit
+import ServiceManagement
+import os
+
+let log = Logger(subsystem: "com.leodeim.scrollflip", category: "app")
 
 enum Device: String, CaseIterable {
     case mouse, trackpad
@@ -50,6 +54,7 @@ private let callback: CGEventTapCallBack = { _, type, event, info in
 final class Controller: NSObject, NSApplicationDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private let accessItem = NSMenuItem(title: "Needs Accessibility access…", action: #selector(openAccessibilitySettings), keyEquivalent: "")
+    private let loginItem = NSMenuItem(title: "Open at Login", action: #selector(toggleOpenAtLogin), keyEquivalent: "")
     private var toggleItems: [Toggle: NSMenuItem] = [:]
     private var tap: CFMachPort?
     private var reversed: Set<Toggle> = []
@@ -58,7 +63,7 @@ final class Controller: NSObject, NSApplicationDelegate {
         // A second instance would flip events back, cancelling the first.
         let running = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "")
         if running.contains(where: { $0 != .current }) {
-            print("scrollflip: already running, exiting")
+            log.notice("already running, exiting")
             exit(0)
         }
 
@@ -67,6 +72,7 @@ final class Controller: NSObject, NSApplicationDelegate {
         reversed = Set(Toggle.all.filter { UserDefaults.standard.bool(forKey: $0.defaultsKey) })
 
         accessItem.target = self
+        loginItem.target = self
         let menu = NSMenu()
         menu.autoenablesItems = false
         menu.addItem(accessItem)
@@ -82,6 +88,7 @@ final class Controller: NSObject, NSApplicationDelegate {
             }
         }
         menu.addItem(.separator())
+        menu.addItem(loginItem)
         menu.addItem(NSMenuItem(title: "Quit ScrollFlip", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         statusItem.menu = menu
 
@@ -121,12 +128,12 @@ final class Controller: NSObject, NSApplicationDelegate {
             userInfo: Unmanaged.passUnretained(self).toOpaque()
         )
         guard let tap else {
-            FileHandle.standardError.write("scrollflip: failed to create event tap\n".data(using: .utf8)!)
+            log.error("failed to create event tap")
             exit(1)
         }
         CFRunLoopAddSource(CFRunLoopGetMain(), CFMachPortCreateRunLoopSource(nil, tap, 0), .commonModes)
         CGEvent.tapEnable(tap: tap, enable: !reversed.isEmpty)
-        print("scrollflip: tap installed")
+        log.notice("tap installed")
         refresh()
     }
 
@@ -135,6 +142,19 @@ final class Controller: NSObject, NSApplicationDelegate {
         if reversed.remove(toggle) == nil { reversed.insert(toggle) }
         UserDefaults.standard.set(reversed.contains(toggle), forKey: toggle.defaultsKey)
         if let tap { CGEvent.tapEnable(tap: tap, enable: !reversed.isEmpty) }
+        refresh()
+    }
+
+    @objc private func toggleOpenAtLogin() {
+        do {
+            if SMAppService.mainApp.status == .enabled {
+                try SMAppService.mainApp.unregister()
+            } else {
+                try SMAppService.mainApp.register()
+            }
+        } catch {
+            log.error("open at login: \(error.localizedDescription, privacy: .public)")
+        }
         refresh()
     }
 
@@ -147,6 +167,7 @@ final class Controller: NSObject, NSApplicationDelegate {
         for (toggle, item) in toggleItems {
             item.state = reversed.contains(toggle) ? .on : .off
         }
+        loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
 
         let active = tap != nil && !reversed.isEmpty
         let symbol = active ? "arrow.up.arrow.down.circle.fill" : "arrow.up.arrow.down.circle"
@@ -155,7 +176,6 @@ final class Controller: NSObject, NSApplicationDelegate {
     }
 }
 
-setlinebuf(stdout)
 let controller = Controller()
 let app = NSApplication.shared
 app.delegate = controller
